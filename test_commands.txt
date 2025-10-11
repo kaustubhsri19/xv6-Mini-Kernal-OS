@@ -1,0 +1,4 @@
+sysinfotest
+dltest
+ls
+exit
