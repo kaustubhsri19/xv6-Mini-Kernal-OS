@@ -6,7 +6,15 @@
 *.img
 *.log
 *.out
-_
+_*
+
+# Binary executables
+bootblock
+entryother
+initcode
+kernel
+mkfs
+vectors.S
 
 # IDE and editor files
 .vscode/
