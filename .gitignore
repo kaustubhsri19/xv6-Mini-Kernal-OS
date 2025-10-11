@@ -1,16 +1,27 @@
-*~
-_*
+# Build artifacts
 *.o
 *.d
 *.asm
 *.sym
 *.img
-vectors.S
-bootblock
-entryother
-initcode
-initcode.out
-kernel
-kernelmemfs
-mkfs
-.gdbinit
+*.log
+*.out
+_
+
+# IDE and editor files
+.vscode/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# QEMU related
+qemu-*
+
+# Temporary files
+*.tmp
+*.temp
+
+# Test files (optional - remove if you want to keep them)
+test_commands.txt
+test_mlfq.txt
