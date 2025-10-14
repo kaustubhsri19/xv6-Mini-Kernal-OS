@@ -1,3 +1,0 @@
-mlfqstatus
-ls
-exit

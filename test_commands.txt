@@ -1,4 +1,0 @@
-sysinfotest
-dltest
-ls
-exit
