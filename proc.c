@@ -47,19 +47,42 @@ void print_queues(void){
   }
   release(&ptable.lock);
   
-  cprintf("MLFQ State:\n");
+  cprintf("┌─────────────────────────────────┐\n");
+  cprintf("│           MLFQ STATUS           │\n");
+  cprintf("├─────────────────────────────────┤\n");
+  
   for(int i = 0; i < NQUEUE; i++){
-    cprintf("Queue %d: %d procs", i, counts[i]);
+    char priority[20];
+    if(i == 0) {
+      priority[0] = 'H'; priority[1] = 'I'; priority[2] = 'G'; priority[3] = 'H';
+      priority[4] = 'E'; priority[5] = 'S'; priority[6] = 'T'; priority[7] = '\0';
+    } else if(i == 1) {
+      priority[0] = 'M'; priority[1] = 'E'; priority[2] = 'D'; priority[3] = 'I';
+      priority[4] = 'U'; priority[5] = 'M'; priority[6] = ' '; priority[7] = '\0';
+    } else {
+      priority[0] = 'L'; priority[1] = 'O'; priority[2] = 'W'; priority[3] = 'E';
+      priority[4] = 'S'; priority[5] = 'T'; priority[6] = ' '; priority[7] = '\0';
+    }
+    
+    cprintf("│ Queue %d (%s): %d processes", i, priority, counts[i]);
+    
     if(counts[i] > 0) {
       cprintf(" [PIDs:");
-      for(int j = 0; j < pid_counts[i] && j < 5; j++) {  // Show up to 5 PIDs
+      for(int j = 0; j < pid_counts[i] && j < 4; j++) {  // Show up to 4 PIDs
         cprintf(" %d", pids[i][j]);
       }
-      if(counts[i] > 5) cprintf("...");
+      if(counts[i] > 4) cprintf("...");
       cprintf("]");
     }
-    cprintf("\n");
+    
+    // Add padding to align the closing bracket
+    int padding = 33 - (counts[i] > 0 ? 8 + pid_counts[i] * 3 : 0);
+    if(counts[i] > 4) padding -= 3;
+    for(int k = 0; k < padding; k++) cprintf(" ");
+    cprintf("│\n");
   }
+  
+  cprintf("└─────────────────────────────────┘\n");
 }
 
 // Must be called with interrupts disabled
