@@ -177,7 +177,12 @@ UPROGS=\
 	_ln\
 	_ls\
 	_mkdir\
+	_mlfqdemo\
 	_mlfqstatus\
+	_mlfqtest1\
+	_mlfqtest2\
+	_mlfqtest3\
+	_mlfqvisual\
 	_rm\
 	_sh\
 	_stressfs\

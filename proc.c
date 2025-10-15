@@ -12,7 +12,6 @@ struct {
   struct proc proc[NPROC];
 } ptable;
 
-struct queue mlfq[NQUEUE];
 
 static struct proc *initproc;
 
@@ -26,29 +25,40 @@ void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
-  // Initialize MLFQ queues
-  for(int i=0; i<NQUEUE; i++){
-      mlfq[i].front = mlfq[i].rear = 0;
-  }
+  // MLFQ initialization happens per-process in allocproc()
 }
 
-void enqueue(struct queue *q, struct proc *p){
-    if(q->rear < NPROC)
-        q->procs[q->rear++] = p;
-}
-
-struct proc* dequeue(struct queue *q){
-    if(q->front == q->rear) return 0;
-    return q->procs[q->front++];
-}
 
 void print_queues(void){
-  int i;
+  struct proc *p;
+  int counts[NQUEUE] = {0};
+  int pids[NQUEUE][NPROC];  // Store PIDs for each queue
+  int pid_counts[NQUEUE] = {0};  // Count of PIDs stored for each queue
+  
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == RUNNABLE && p->queue_level < NQUEUE) {
+      counts[p->queue_level]++;
+      if(pid_counts[p->queue_level] < NPROC) {
+        pids[p->queue_level][pid_counts[p->queue_level]] = p->pid;
+        pid_counts[p->queue_level]++;
+      }
+    }
+  }
+  release(&ptable.lock);
+  
   cprintf("MLFQ State:\n");
-  for(i = 0; i < NQUEUE; i++){
-    int cnt = mlfq[i].rear - mlfq[i].front;
-    if (cnt < 0) cnt = 0;         // safety guard
-    cprintf("Queue %d: %d procs\n", i, cnt);
+  for(int i = 0; i < NQUEUE; i++){
+    cprintf("Queue %d: %d procs", i, counts[i]);
+    if(counts[i] > 0) {
+      cprintf(" [PIDs:");
+      for(int j = 0; j < pid_counts[i] && j < 5; j++) {  // Show up to 5 PIDs
+        cprintf(" %d", pids[i][j]);
+      }
+      if(counts[i] > 5) cprintf("...");
+      cprintf("]");
+    }
+    cprintf("\n");
   }
 }
 
@@ -114,6 +124,11 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  
+  // Initialize MLFQ fields
+  p->queue_level = 0;              // Start in highest priority queue
+  p->time_slice = TIME_SLICE_0;    // Get full time slice
+  p->total_runtime = 0;            // No runtime yet
 
   release(&ptable.lock);
 
@@ -175,6 +190,7 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
+  // add_to_mlfq(p);  // MLFQ disabled temporarily
 
   release(&ptable.lock);
 }
@@ -241,6 +257,7 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  // add_to_mlfq(np);  // MLFQ disabled temporarily
 
   release(&ptable.lock);
 
@@ -274,6 +291,9 @@ exit(void)
   curproc->cwd = 0;
 
   acquire(&ptable.lock);
+
+  // Remove from MLFQ queue
+  // remove_from_mlfq(curproc);
 
   // Parent might be sleeping in wait().
   wakeup1(curproc->parent);
@@ -341,7 +361,7 @@ wait(void)
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
-//  - choose a process to run
+//  - choose a process to run using MLFQ
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
@@ -355,32 +375,49 @@ scheduler(void)
   for(;;){
     // Enable interrupts on this processor.
     sti();
-
-    // TODO: Replace Round-Robin with MLFQ scheduling
-    // Automatic printing removed - now available via mlfqstatus command
-
-    // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
-
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
+    
+    // MLFQ Scheduling: Scan all queues from highest to lowest priority
+    struct proc *chosen = 0;
+    for(int level = 0; level < NQUEUE && !chosen; level++) {
+      for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+        if(p->state == RUNNABLE && p->queue_level == level) {
+          chosen = p;
+          break;
+        }
+      }
+    }
+    
+    if(chosen) {
+      p = chosen;
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
-
+      
       swtch(&(c->scheduler), p->context);
       switchkvm();
-
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
+      
       c->proc = 0;
+      
+      // MLFQ logic after process yields
+      if(p->state == RUNNABLE) {
+        p->time_slice--;
+        p->total_runtime++;
+        
+        // Demote if time slice expired
+        if(p->time_slice <= 0) {
+          if(p->queue_level < NQUEUE - 1) {
+            p->queue_level++;
+          }
+          // Reset time slice for new queue
+          if(p->queue_level == 0) p->time_slice = TIME_SLICE_0;
+          else if(p->queue_level == 1) p->time_slice = TIME_SLICE_1;
+          else p->time_slice = TIME_SLICE_2;
+        }
+      }
     }
+    
     release(&ptable.lock);
-
   }
 }
 
@@ -415,7 +452,13 @@ void
 yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
-  myproc()->state = RUNNABLE;
+  struct proc *p = myproc();
+  p->state = RUNNABLE;
+  
+  // Remove from current queue and add back to same queue
+  // remove_from_mlfq(p);
+  // add_to_mlfq(p);
+  
   sched();
   release(&ptable.lock);
 }
@@ -489,8 +532,10 @@ wakeup1(void *chan)
   struct proc *p;
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
+    if(p->state == SLEEPING && p->chan == chan) {
       p->state = RUNNABLE;
+      // add_to_mlfq(p);  // MLFQ disabled temporarily
+    }
 }
 
 // Wake up all processes sleeping on chan.
@@ -515,8 +560,10 @@ kill(int pid)
     if(p->pid == pid){
       p->killed = 1;
       // Wake process from sleep if necessary.
-      if(p->state == SLEEPING)
+      if(p->state == SLEEPING) {
         p->state = RUNNABLE;
+        // add_to_mlfq(p);  // MLFQ disabled temporarily
+      }
       release(&ptable.lock);
       return 0;
     }
@@ -533,12 +580,7 @@ void
 procdump(void)
 {
   static char *states[] = {
-  [UNUSED]    "unused",
-  [EMBRYO]    "embryo",
-  [SLEEPING]  "sleep ",
-  [RUNNABLE]  "runble",
-  [RUNNING]   "run   ",
-  [ZOMBIE]    "zombie"
+    "unused", "embryo", "sleep ", "runble", "run   ", "zombie"
   };
   int i;
   struct proc *p;

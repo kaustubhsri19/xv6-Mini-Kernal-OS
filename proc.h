@@ -49,6 +49,10 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  // MLFQ fields
+  int queue_level;             // Current priority queue (0 = highest)
+  int time_slice;              // Remaining time slice
+  int total_runtime;           // Total ticks consumed
 };
 
 // Process memory is laid out contiguously, low addresses first:
@@ -58,9 +62,6 @@ struct proc {
 //   expandable heap
 
 #define NQUEUE 3
-struct queue {
-    struct proc *procs[NPROC];
-    int front, rear;
-};
-
-extern struct queue mlfq[NQUEUE];
+#define TIME_SLICE_0 5
+#define TIME_SLICE_1 10  
+#define TIME_SLICE_2 20
