@@ -152,6 +152,7 @@ found:
   p->queue_level = 0;              // Start in highest priority queue
   p->time_slice = TIME_SLICE_0;    // Get full time slice
   p->total_runtime = 0;            // No runtime yet
+  p->priority = 0;                 // Default priority (0 = no priority set)
 
   release(&ptable.lock);
 
@@ -405,6 +406,18 @@ scheduler(void)
     for(int level = 0; level < NQUEUE && !chosen; level++) {
       for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
         if(p->state == RUNNABLE && p->queue_level == level) {
+          // Check if process has priority set and assign to appropriate queue
+          if(p->priority > 0 && p->priority <= NQUEUE) {
+            // Priority 1 = Queue 0 (highest), Priority 2 = Queue 1, Priority 3 = Queue 2
+            int target_queue = p->priority - 1;
+            if(p->queue_level != target_queue) {
+              p->queue_level = target_queue;
+              // Set appropriate time slice
+              if(target_queue == 0) p->time_slice = TIME_SLICE_0;
+              else if(target_queue == 1) p->time_slice = TIME_SLICE_1;
+              else p->time_slice = TIME_SLICE_2;
+            }
+          }
           chosen = p;
           break;
         }
@@ -429,6 +442,7 @@ scheduler(void)
         
         // Demote if time slice expired
         if(p->time_slice <= 0) {
+          int old_level = p->queue_level;
           if(p->queue_level < NQUEUE - 1) {
             p->queue_level++;
           }
@@ -436,6 +450,11 @@ scheduler(void)
           if(p->queue_level == 0) p->time_slice = TIME_SLICE_0;
           else if(p->queue_level == 1) p->time_slice = TIME_SLICE_1;
           else p->time_slice = TIME_SLICE_2;
+          
+          // Record snapshot if recording is active and queue changed
+          if(mlfq_recorder.recording && old_level != p->queue_level) {
+            record_mlfq_snapshot();
+          }
         }
       }
     }
@@ -625,4 +644,51 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+// MLFQ Recording Functions
+
+void record_mlfq_snapshot(void) {
+  if(mlfq_recorder.snapshot_count >= MAX_MLFQ_SNAPSHOTS)
+    return;
+    
+  struct mlfq_snapshot *snap = &mlfq_recorder.snapshots[mlfq_recorder.snapshot_count];
+  snap->tick = ticks;
+  
+  // Reset counts
+  for(int i = 0; i < NQUEUE; i++) {
+    snap->counts[i] = 0;
+    snap->pid_counts[i] = 0;
+  }
+  
+  // Scan process table
+  struct proc *p;
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == RUNNABLE && p->queue_level < NQUEUE) {
+      int q = p->queue_level;
+      snap->counts[q]++;
+      if(snap->pid_counts[q] < NPROC) {
+        snap->pids[q][snap->pid_counts[q]] = p->pid;
+        snap->pid_counts[q]++;
+      }
+    }
+  }
+  
+  mlfq_recorder.snapshot_count++;
+}
+
+int sys_mlfqstart(void) {
+  acquire(&ptable.lock);
+  mlfq_recorder.recording = 1;
+  mlfq_recorder.snapshot_count = 0;
+  record_mlfq_snapshot();  // Record initial state
+  release(&ptable.lock);
+  return 0;
+}
+
+int sys_mlfqstop(void) {
+  acquire(&ptable.lock);
+  mlfq_recorder.recording = 0;
+  release(&ptable.lock);
+  return 0;
 }

@@ -46,7 +46,7 @@ main(void)
     // Parent process - monitor MLFQ status with clear formatting
     for(i = 0; i < 8; i++) {
         printf(1, "--- Time: %d seconds ---\n", i*2);
-        mlfqstatus();
+        mlfqrealtime();  // Use real-time status instead of recorded data
         printf(1, "\n");
         
         // Wait 2 seconds before next check

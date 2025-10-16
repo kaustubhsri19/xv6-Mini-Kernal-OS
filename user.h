@@ -26,6 +26,11 @@ int uptime(void);
 int getsysinfo(void *addr);
 int detect_deadlock(void);
 int mlfqstatus(void);
+int mlfqstart(void);
+int mlfqstop(void);
+int mlfqvisual(void);
+int mlfqrealtime(void);
+int setpriority(int priority);
 
 // ulib.c
 int stat(const char*, struct stat*);

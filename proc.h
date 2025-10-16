@@ -49,10 +49,11 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-  // MLFQ fields
-  int queue_level;             // Current priority queue (0 = highest)
-  int time_slice;              // Remaining time slice
-  int total_runtime;           // Total ticks consumed
+          // MLFQ fields
+          int queue_level;             // Current priority queue (0 = highest)
+          int time_slice;              // Remaining time slice
+          int total_runtime;           // Total ticks consumed
+          int priority;                // Process priority (1=highest, 2=medium, 3=lowest)
 };
 
 // Process memory is laid out contiguously, low addresses first:
@@ -61,7 +62,20 @@ struct proc {
 //   fixed-size stack
 //   expandable heap
 
-#define NQUEUE 3
-#define TIME_SLICE_0 5
-#define TIME_SLICE_1 10  
-#define TIME_SLICE_2 20
+// MLFQ recording structure
+struct mlfq_snapshot {
+  int tick;                      // System tick when recorded
+  int counts[NQUEUE];            // Process count per queue
+  int pids[NQUEUE][NPROC];       // PIDs in each queue
+  int pid_counts[NQUEUE];        // Number of PIDs per queue
+};
+
+struct {
+  int recording;                           // 1 if recording, 0 otherwise
+  int snapshot_count;                      // Number of snapshots taken
+  struct mlfq_snapshot snapshots[MAX_MLFQ_SNAPSHOTS];
+} mlfq_recorder;
+
+// Function declarations
+void print_queues(void);
+void record_mlfq_snapshot(void);

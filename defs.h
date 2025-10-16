@@ -164,6 +164,7 @@ int             detect_deadlock(void);
 
 // proc.c
 void            print_queues(void);
+void            record_mlfq_snapshot(void);
 
 // trap.c
 void            idtinit(void);

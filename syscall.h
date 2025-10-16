@@ -23,3 +23,8 @@
 #define SYS_getsysinfo 22
 #define SYS_detect_deadlock 23
 #define SYS_mlfqstatus 24
+#define SYS_mlfqstart 25
+#define SYS_mlfqstop 26
+#define SYS_mlfqvisual 27
+#define SYS_mlfqrealtime 28
+#define SYS_setpriority 29

@@ -178,7 +178,9 @@ UPROGS=\
 	_ls\
 	_mkdir\
 	_mlfqdemo\
+	_mlfqstart\
 	_mlfqstatus\
+	_mlfqstop\
 	_mlfqtest1\
 	_mlfqtest2\
 	_mlfqtest3\

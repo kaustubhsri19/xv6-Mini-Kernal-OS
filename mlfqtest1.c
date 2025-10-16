@@ -7,7 +7,11 @@ main(void)
 {
     int i, j;
     
-    printf(1, "MLFQ Test 1: CPU intensive process started (PID: %d)\n", getpid());
+    printf(1, "MLFQ Test 1: HIGH PRIORITY process started (PID: %d)\n", getpid());
+    
+    // Set this process to highest priority (1)
+    setpriority(1);
+    printf(1, "Set priority to 1 (highest)\n");
     
     // CPU intensive loop to consume time slices
     for(i = 0; i < 50000; i++) {

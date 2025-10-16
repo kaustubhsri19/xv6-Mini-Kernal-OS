@@ -12,3 +12,10 @@
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
 #define FSSIZE       1000  // size of file system in blocks
 
+// MLFQ constants
+#define NQUEUE 3
+#define TIME_SLICE_0 5
+#define TIME_SLICE_1 10  
+#define TIME_SLICE_2 20
+#define MAX_MLFQ_SNAPSHOTS 1000  // Increased from 200 to 1000
+
