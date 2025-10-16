@@ -202,7 +202,6 @@ sys_setpriority(void) {
   if(priority < 1 || priority > 3)
     return -1;
     
-  acquire(&ptable.lock);
   struct proc *curproc = myproc();
   if(curproc) {
     curproc->priority = priority;
@@ -214,7 +213,6 @@ sys_setpriority(void) {
     else if(target_queue == 1) curproc->time_slice = TIME_SLICE_1;
     else curproc->time_slice = TIME_SLICE_2;
   }
-  release(&ptable.lock);
   
   return 0;
 }
