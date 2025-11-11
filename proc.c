@@ -12,6 +12,8 @@ struct {
   struct proc proc[NPROC];
 } ptable;
 
+// MLFQ recorder instance (declared as extern in proc.h)
+struct mlfq_recorder_t mlfq_recorder;
 
 static struct proc *initproc;
 

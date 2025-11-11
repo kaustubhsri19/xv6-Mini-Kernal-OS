@@ -70,11 +70,15 @@ struct mlfq_snapshot {
   int pid_counts[NQUEUE];        // Number of PIDs per queue
 };
 
-struct {
+// MLFQ recorder structure type
+struct mlfq_recorder_t {
   int recording;                           // 1 if recording, 0 otherwise
   int snapshot_count;                      // Number of snapshots taken
   struct mlfq_snapshot snapshots[MAX_MLFQ_SNAPSHOTS];
-} mlfq_recorder;
+};
+
+// External declaration (defined in proc.c)
+extern struct mlfq_recorder_t mlfq_recorder;
 
 // Function declarations
 void print_queues(void);
