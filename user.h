@@ -1,5 +1,8 @@
 struct stat;
 struct rtcdate;
+struct procinfo;
+struct cpustats;
+struct deadlockinfo;
 
 // system calls
 int fork(void);
@@ -31,6 +34,11 @@ int mlfqstop(void);
 int mlfqvisual(void);
 int mlfqrealtime(void);
 int setpriority(int priority);
+int getallprocinfo(struct procinfo*, int);
+int getcpustats(struct cpustats*);
+int setscheduler(int);
+int getdeadlockinfo(struct deadlockinfo*);
+int getscheduler(void);
 
 // ulib.c
 int stat(const char*, struct stat*);

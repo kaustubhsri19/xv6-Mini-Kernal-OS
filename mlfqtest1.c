@@ -7,23 +7,20 @@ main(void)
 {
     int i, j;
     
-    printf(1, "MLFQ Test 1: HIGH PRIORITY process started (PID: %d)\n", getpid());
-    
-    // Set this process to highest priority (1)
-    setpriority(1);
-    printf(1, "Set priority to 1 (highest)\n");
+    printf(1, "MLFQ Test 1: CPU-intensive process started (PID: %d)\n", getpid());
+    printf(1, "Starting in MLFQ Queue 0 (will demote based on CPU usage)\n");
     
     // CPU intensive loop to consume time slices
-    for(i = 0; i < 50000; i++) {
-        for(j = 0; j < 10000; j++) {
+    for(i = 0; i < 100000; i++) {
+        for(j = 0; j < 1000; j++) {
             // Busy wait to consume CPU time
         }
-        if(i % 5000 == 0) {
+        if(i % 10000 == 0) {
             printf(1, "MLFQ Test 1 (PID %d): iteration %d\n", getpid(), i);
         }
         // Sleep occasionally to allow other processes to run
-        if(i % 10000 == 0) {
-            sleep(1);
+        if(i % 25000 == 0) {
+            sleep(10);
         }
     }
     

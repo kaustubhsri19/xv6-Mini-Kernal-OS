@@ -161,10 +161,13 @@ void            timerinit(void);
 
 // deadlock.c
 int             detect_deadlock(void);
+void            build_wfg(void);
+int             dfs_check_cycle(int);
 
 // proc.c
 void            print_queues(void);
 void            record_mlfq_snapshot(void);
+void            statsinit(void);
 
 // trap.c
 void            idtinit(void);

@@ -5,7 +5,16 @@
 #include "param.h"
 #include "memlayout.h"
 #include "mmu.h"
+#include "spinlock.h"
 #include "proc.h"
+#include "procinfo.h"
+
+// Define cpustats_kernel structure here since it's not in a header
+struct cpustats_kernel {
+  struct spinlock lock;
+  uint total_ticks;
+  uint idle_ticks;
+};
 
 int
 sys_fork(void)
@@ -214,5 +223,157 @@ sys_setpriority(void) {
     else curproc->time_slice = TIME_SLICE_2;
   }
   
+  return 0;
+}
+
+// Externs for new features
+extern struct {
+  struct spinlock lock;
+  struct proc proc[NPROC];
+} ptable;
+
+extern int current_scheduler_policy;
+extern struct spinlock policy_lock;
+extern struct cpustats_kernel cpu_stats;
+extern void build_wfg(void);
+extern int dfs_check_cycle(int);
+extern int visited[NPROC];
+extern int recursion_stack[NPROC];
+extern int cycle[NPROC];
+extern int cycle_len;
+
+int
+sys_getallprocinfo(void)
+{
+  uint user_buf_addr; // User-space pointer to an array
+  int max_count;        // Max size of user's array
+  
+  if(argint(0, (int*)&user_buf_addr) < 0 || argint(1, &max_count) < 0) {
+    return -1;
+  }
+  
+  // Validate max_count
+  if(max_count <= 0 || max_count > NPROC) {
+    return -1;
+  }
+  
+  struct procinfo k_info_buf[NPROC];
+  struct proc *p;
+  int count = 0;
+
+  acquire(&ptable.lock);
+  
+  for(p = ptable.proc; p < &ptable.proc[NPROC] && count < max_count; p++) {
+    if(p->state == UNUSED)
+      continue;
+    
+    k_info_buf[count].pid = p->pid;
+    k_info_buf[count].ppid = p->parent ? p->parent->pid : 0;
+    k_info_buf[count].state = p->state;
+    safestrcpy(k_info_buf[count].name, p->name, 16);
+    k_info_buf[count].priority = p->priority;
+    k_info_buf[count].mlfq_level = p->mlfq_level;
+    k_info_buf[count].start_time = p->start_time;
+    k_info_buf[count].cpu_ticks = p->cpu_ticks;
+    
+    count++;
+  }
+  
+  release(&ptable.lock);
+
+  if(copyout(myproc()->pgdir, user_buf_addr, (char*)k_info_buf, count * sizeof(struct procinfo)) < 0) {
+    return -1;
+  }
+  
+  return count;
+}
+
+int
+sys_getcpustats(void)
+{
+  uint user_addr;
+  struct cpustats k_stats; // Kernel-side temporary copy
+
+  if(argint(0, (int*)&user_addr) < 0)
+    return -1;
+    
+  acquire(&cpu_stats.lock);
+  k_stats.total_ticks = cpu_stats.total_ticks;
+  k_stats.idle_ticks = cpu_stats.idle_ticks;
+  release(&cpu_stats.lock);
+  
+  if(copyout(myproc()->pgdir, user_addr, (char*)&k_stats, sizeof(k_stats)) < 0)
+    return -1;
+    
+  return 0;
+}
+
+int
+sys_setscheduler(void)
+{
+  int policy;
+
+  if(argint(0, &policy) < 0)
+    return -1;
+
+  // Validate policy range
+  if(policy < 0 || policy > 2) // 0=RR, 1=PBS, 2=MLFQ
+    return -1; // Invalid policy number
+
+  acquire(&policy_lock);
+  current_scheduler_policy = policy;
+  release(&policy_lock);
+  
+  return 0;
+}
+
+int
+sys_getscheduler(void)
+{
+  int policy;
+  
+  acquire(&policy_lock);
+  policy = current_scheduler_policy;
+  release(&policy_lock);
+  
+  return policy;
+}
+
+int
+sys_getdeadlockinfo(void)
+{
+  uint user_addr;
+  struct deadlockinfo k_info;
+  memset(&k_info, 0, sizeof(k_info));
+
+  if(argint(0, (int*)&user_addr) < 0)
+    return -1;
+
+  // 1. Build the WFG
+  build_wfg();
+
+  // 2. Clear DFS state and search for a cycle
+  memset(visited, 0, sizeof(visited));
+  memset(recursion_stack, 0, sizeof(recursion_stack));
+  cycle_len = 0;
+
+  // Only check processes with valid PIDs
+  for(int i = 0; i < NPROC; i++) {
+    struct proc *proc = &ptable.proc[i];
+    if(proc->state != UNUSED && proc->pid > 0 && proc->pid < NPROC && !visited[proc->pid]) {
+      if(dfs_check_cycle(proc->pid)) {
+        k_info.found = 1;
+        // Copy the cycle array into k_info
+        for(int j=0; j < cycle_len && j < NPROC; j++)
+          k_info.pids_in_cycle[j] = cycle[j];
+        break; // Found one, that's enough
+      }
+    }
+  }
+
+  // 3. Copy result to user
+  if(copyout(myproc()->pgdir, user_addr, (char*)&k_info, sizeof(k_info)) < 0)
+    return -1;
+    
   return 0;
 }

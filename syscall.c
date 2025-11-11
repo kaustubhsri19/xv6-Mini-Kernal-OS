@@ -111,6 +111,11 @@ extern int sys_mlfqstop(void);
 extern int sys_mlfqvisual(void);
 extern int sys_mlfqrealtime(void);
 extern int sys_setpriority(void);
+extern int sys_getallprocinfo(void);
+extern int sys_getcpustats(void);
+extern int sys_setscheduler(void);
+extern int sys_getdeadlockinfo(void);
+extern int sys_getscheduler(void);
 
 static int (*syscalls[])(void) = {
   [SYS_fork]           = sys_fork,
@@ -141,7 +146,12 @@ static int (*syscalls[])(void) = {
   [SYS_mlfqstop]       = sys_mlfqstop,
   [SYS_mlfqvisual]     = sys_mlfqvisual,
   [SYS_mlfqrealtime]   = sys_mlfqrealtime,
-  [SYS_setpriority]    = sys_setpriority
+  [SYS_setpriority]    = sys_setpriority,
+  [SYS_getallprocinfo] = sys_getallprocinfo,
+  [SYS_getcpustats]    = sys_getcpustats,
+  [SYS_setscheduler]   = sys_setscheduler,
+  [SYS_getdeadlockinfo]= sys_getdeadlockinfo,
+  [SYS_getscheduler]   = sys_getscheduler
 };
 
 void

@@ -7,6 +7,9 @@
 #include "proc.h"
 #include "spinlock.h"
 
+extern uint ticks;
+extern struct spinlock tickslock;
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -18,15 +21,53 @@ struct mlfq_recorder_t mlfq_recorder;
 static struct proc *initproc;
 
 int nextpid = 1;
+
+// --- NEW GLOBAL SCHEDULER VARS ---
+#define SCHED_RR 0      // Default Round-Robin
+#define SCHED_PBS 1     // Priority-Based Scheduler
+#define SCHED_MLFQ 2    // Multi-Level Feedback Queue
+
+int current_scheduler_policy = SCHED_MLFQ;  // Start with MLFQ to demonstrate it works
+struct spinlock policy_lock;
+
+// MLFQ Global
+uint last_boost_tick = 0;
+
+// CPU Stats Global - Full definition here
+struct cpustats_kernel {
+  struct spinlock lock;
+  uint total_ticks;
+  uint idle_ticks;
+};
+
+struct cpustats_kernel cpu_stats;
+
+// Deadlock Detector Globals
+int wfg[NPROC][NPROC];
+int visited[NPROC];
+int recursion_stack[NPROC];
+int cycle[NPROC];
+int cycle_len = 0;
+// --- END NEW GLOBALS ---
 extern void forkret(void);
 extern void trapret(void);
 
 static void wakeup1(void *chan);
 
 void
+statsinit(void)
+{
+  initlock(&cpu_stats.lock, "cpu_stats");
+  cpu_stats.total_ticks = 0;
+  cpu_stats.idle_ticks = 0;
+}
+
+void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+  initlock(&policy_lock, "policy");
+  statsinit(); // Initialize new stats structure
   // MLFQ initialization happens per-process in allocproc()
 }
 
@@ -150,11 +191,19 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
   
-  // Initialize MLFQ fields
+  // Initialize MLFQ fields (legacy)
   p->queue_level = 0;              // Start in highest priority queue
   p->time_slice = TIME_SLICE_0;    // Get full time slice
   p->total_runtime = 0;            // No runtime yet
-  p->priority = 0;                 // Default priority (0 = no priority set)
+  
+  // Initialize new fields
+  p->priority = 60;                // Default priority
+  p->wait_time = 0;
+  p->mlfq_level = 0;               // New processes in highest queue
+  p->mlfq_ticks = 0;
+  p->start_time = ticks;           // Capture the current time
+  p->cpu_ticks = 0;
+  p->waiting_on_chan = 0;
 
   release(&ptable.lock);
 
@@ -277,6 +326,10 @@ fork(void)
   np->cwd = idup(curproc->cwd);
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+  
+  // Child inherits scheduling parameters
+  np->priority = curproc->priority;
+  np->mlfq_level = curproc->mlfq_level;
 
   pid = np->pid;
 
@@ -384,85 +437,189 @@ wait(void)
 }
 
 //PAGEBREAK: 42
+// Forward declarations for the policy implementations
+static void scheduler_rr(struct cpu *c);
+static void scheduler_pbs(struct cpu *c);
+static void scheduler_mlfq(struct cpu *c);
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
-// Scheduler never returns.  It loops, doing:
-//  - choose a process to run using MLFQ
-//  - swtch to start running that process
-//  - eventually that process transfers control
-//      via swtch back to the scheduler.
+// Scheduler never returns. It loops, doing:
+// - choose a process to run
+// - swtch to start running that process
+// - eventually that process transfers control
+//   via swtch back to the scheduler
 void
 scheduler(void)
 {
-  struct proc *p;
-  struct cpu *c = mycpu();
-  c->proc = 0;
+  struct cpu *c;
   
+  // Disable interrupts before calling mycpu()
+  pushcli();
+  c = mycpu();
+  c->proc = 0;
+  popcli();
+
   for(;;){
     // Enable interrupts on this processor.
     sti();
-    acquire(&ptable.lock);
-    
-    // MLFQ Scheduling: Scan all queues from highest to lowest priority
-    struct proc *chosen = 0;
-    for(int level = 0; level < NQUEUE && !chosen; level++) {
-      for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-        if(p->state == RUNNABLE && p->queue_level == level) {
-          // Check if process has priority set and assign to appropriate queue
-          if(p->priority > 0 && p->priority <= NQUEUE) {
-            // Priority 1 = Queue 0 (highest), Priority 2 = Queue 1, Priority 3 = Queue 2
-            int target_queue = p->priority - 1;
-            if(p->queue_level != target_queue) {
-              p->queue_level = target_queue;
-              // Set appropriate time slice
-              if(target_queue == 0) p->time_slice = TIME_SLICE_0;
-              else if(target_queue == 1) p->time_slice = TIME_SLICE_1;
-              else p->time_slice = TIME_SLICE_2;
-            }
-          }
-          chosen = p;
-          break;
-        }
-      }
+
+    // Read the current policy.
+    // We acquire the lock to ensure we don't read the
+    // value mid-write (a "tear") from another CPU.
+    acquire(&policy_lock);
+    int policy = current_scheduler_policy;
+    release(&policy_lock);
+
+    // Dispatch to the correct scheduler
+    if(policy == SCHED_PBS) {
+      scheduler_pbs(c);
+    } else if(policy == SCHED_MLFQ) {
+      scheduler_mlfq(c);
+    } else {
+      scheduler_rr(c); // Default
     }
-    
-    if(chosen) {
-      p = chosen;
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
-      
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
-      
-      c->proc = 0;
-      
-      // MLFQ logic after process yields
-      if(p->state == RUNNABLE) {
-        p->time_slice--;
-        p->total_runtime++;
-        
-        // Demote if time slice expired
-        if(p->time_slice <= 0) {
-          int old_level = p->queue_level;
-          if(p->queue_level < NQUEUE - 1) {
-            p->queue_level++;
-          }
-          // Reset time slice for new queue
-          if(p->queue_level == 0) p->time_slice = TIME_SLICE_0;
-          else if(p->queue_level == 1) p->time_slice = TIME_SLICE_1;
-          else p->time_slice = TIME_SLICE_2;
-          
-          // Record snapshot if recording is active and queue changed
-          if(mlfq_recorder.recording && old_level != p->queue_level) {
-            record_mlfq_snapshot();
-          }
-        }
-      }
-    }
-    
-    release(&ptable.lock);
   }
+}
+
+// Original Round-Robin Scheduler
+static void
+scheduler_rr(struct cpu *c)
+{
+  struct proc *p;
+  
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if(p->state != RUNNABLE)
+      continue;
+      
+    // Switch to chosen process.
+    c->proc = p;
+    switchuvm(p);
+    p->state = RUNNING;
+
+    swtch(&c->scheduler, p->context);
+    switchkvm();
+
+    // Process is done running for now.
+    c->proc = 0;
+  }
+  release(&ptable.lock);
+}
+
+// Priority-Based Scheduler with Aging
+static void
+scheduler_pbs(struct cpu *c)
+{
+  struct proc *p;
+  struct proc *best_p = 0;
+  int min_priority = 10000; // A high number
+
+  acquire(&ptable.lock);
+
+  // 1. Find the highest-priority (lowest value) runnable process
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if(p->state == RUNNABLE) {
+      if(p->priority < min_priority) {
+        min_priority = p->priority;
+        best_p = p;
+      }
+    }
+  }
+
+  // 2. If a process was found, perform aging on all *other* runnable processes
+  if(best_p) {
+    #define AGING_THRESHOLD 50 // Example threshold: 50 ticks
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if(p->state == RUNNABLE && p != best_p) {
+        // Prevent wait_time overflow
+        if(p->wait_time < 10000)
+          p->wait_time++;
+        if(p->wait_time > AGING_THRESHOLD) {
+          if(p->priority > 0) // Don't let priority go below 0
+            p->priority--; // Boost priority
+          p->wait_time = 0;
+          // Re-check if this aged process is now the best
+          if(p->priority < best_p->priority)
+            best_p = p;
+        }
+      }
+    }
+  }
+
+  // 3. Run the best process
+  if(best_p) {
+    best_p->state = RUNNING;
+    best_p->wait_time = 0; // Reset wait time
+    c->proc = best_p;
+    switchuvm(best_p);
+    
+    swtch(&c->scheduler, best_p->context);
+    switchkvm();
+    
+    c->proc = 0;
+  }
+
+  release(&ptable.lock);
+}
+
+// New MLFQ Scheduler
+static void
+scheduler_mlfq(struct cpu *c)
+{
+  struct proc *p;
+  struct proc *best_p = 0;
+
+  acquire(&ptable.lock);
+  
+  // 1. Check for Priority Boost
+  acquire(&tickslock);
+  uint current_ticks = ticks;
+  release(&tickslock);
+  
+  if(current_ticks > last_boost_tick + BOOST_INTERVAL_TICKS) {
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if(p->state != UNUSED) {
+        p->mlfq_level = 0;
+        p->mlfq_ticks = 0;
+      }
+    }
+    last_boost_tick = current_ticks;
+  }
+  
+  // Record MLFQ snapshot every 100 ticks if recording is active
+  static uint last_snapshot_tick = 0;
+  if(mlfq_recorder.recording && current_ticks >= last_snapshot_tick + 100) {
+    record_mlfq_snapshot();
+    last_snapshot_tick = current_ticks;
+  }
+  
+  // 2. Find highest-priority runnable process
+  // Iterate from Q0 down to Q(NQUEUE-1)
+  for(int level = 0; level < NQUEUE; level++) {
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if(p->state == RUNNABLE && p->mlfq_level == level) {
+        best_p = p;
+        goto found; // Found our process
+      }
+    }
+  }
+  // No runnable process
+  release(&ptable.lock);
+  return; 
+
+found:
+  // 3. Run the chosen process
+  best_p->state = RUNNING;
+  c->proc = best_p;
+  switchuvm(best_p);
+  
+  swtch(&c->scheduler, best_p->context);
+  switchkvm();
+  
+  c->proc = 0;
+  
+  release(&ptable.lock);
 }
 
 // Enter scheduler.  Must hold only ptable.lock
@@ -577,6 +734,10 @@ wakeup1(void *chan)
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == SLEEPING && p->chan == chan) {
+      // --- DEADLOCK INSTRUMENTATION (WAKEUP) ---
+      p->waiting_on_chan = 0; // No longer waiting
+      // --- END INSTRUMENTATION ---
+      
       p->state = RUNNABLE;
       // add_to_mlfq(p);  // MLFQ disabled temporarily
     }
@@ -663,11 +824,11 @@ void record_mlfq_snapshot(void) {
     snap->pid_counts[i] = 0;
   }
   
-  // Scan process table
+  // Scan process table - capture RUNNABLE and RUNNING processes
   struct proc *p;
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    if(p->state == RUNNABLE && p->queue_level < NQUEUE) {
-      int q = p->queue_level;
+    if((p->state == RUNNABLE || p->state == RUNNING) && p->mlfq_level < NQUEUE) {
+      int q = p->mlfq_level;
       snap->counts[q]++;
       if(snap->pid_counts[q] < NPROC) {
         snap->pids[q][snap->pid_counts[q]] = p->pid;

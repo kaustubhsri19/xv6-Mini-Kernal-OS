@@ -8,11 +8,22 @@
 #include "traps.h"
 #include "spinlock.h"
 
+// Define cpustats_kernel structure here since it's not in a header
+struct cpustats_kernel {
+  struct spinlock lock;
+  uint total_ticks;
+  uint idle_ticks;
+};
+
 // Interrupt descriptor table (shared by all CPUs).
 struct gatedesc idt[256];
 extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
+
+// Externs for new features
+extern struct cpustats_kernel cpu_stats;
+extern int current_scheduler_policy;
 
 void
 tvinit(void)
@@ -103,8 +114,43 @@ trap(struct trapframe *tf)
   // Force process to give up CPU on clock tick.
   // If interrupts were on while locks held, would need to check nlock.
   if(myproc() && myproc()->state == RUNNING &&
-     tf->trapno == T_IRQ0+IRQ_TIMER)
+     tf->trapno == T_IRQ0+IRQ_TIMER) {
+    
+    // --- BEGIN PROJECT MODIFICATIONS ---
+    struct proc *p = myproc();
+    
+    // 1. CPU Statistics
+    acquire(&cpu_stats.lock);
+    cpu_stats.total_ticks++;
+    
+    // Increment process CPU ticks
+    if(p && p->state == RUNNING)
+      p->cpu_ticks++;
+    
+    release(&cpu_stats.lock);
+
+    // 2. MLFQ Demotion Logic
+    if(current_scheduler_policy == 2 && p->state == RUNNING) { // SCHED_MLFQ = 2
+      p->mlfq_ticks++;
+      
+      // Bounds check for safety
+      if(p->mlfq_level < 0) p->mlfq_level = 0;
+      if(p->mlfq_level >= NQUEUE) p->mlfq_level = NQUEUE - 1;
+      
+      // Use time slices from param.h
+      int time_slices[] = {TIME_SLICE_0, TIME_SLICE_1, TIME_SLICE_2};
+      int current_slice = time_slices[p->mlfq_level];
+      
+      if(p->mlfq_ticks >= current_slice) {
+        if(p->mlfq_level < NQUEUE - 1) // Demote to next lower queue
+          p->mlfq_level++;
+        p->mlfq_ticks = 0;
+      }
+    }
+    // --- END PROJECT MODIFICATIONS ---
+    
     yield();
+  }
 
   // Check if the process has been killed since we yielded
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)

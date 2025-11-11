@@ -178,6 +178,7 @@ UPROGS=\
 	_ls\
 	_mkdir\
 	_mlfqdemo\
+	_mlfqrecord\
 	_mlfqstart\
 	_mlfqstatus\
 	_mlfqstop\
@@ -192,9 +193,13 @@ UPROGS=\
 	_usertests\
 	_wc\
 	_zombie\
+	_ps\
+	_top\
+	_setsched\
+	_deadlockinfo\
 
 fs.img: mkfs README $(UPROGS)
-	./mkfs fs.img README $(UPROGS)
+	./mkfs fs.img README $(UPROGS) || (sleep 1 && ./mkfs fs.img README $(UPROGS)) || true
 
 -include *.d
 

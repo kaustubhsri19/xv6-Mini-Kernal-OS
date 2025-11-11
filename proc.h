@@ -1,3 +1,6 @@
+// Forward declaration
+struct spinlock;
+
 // Per-CPU state
 struct cpu {
   uchar apicid;                // Local APIC ID
@@ -12,6 +15,12 @@ struct cpu {
 
 extern struct cpu cpus[NCPU];
 extern int ncpu;
+
+// Define enum procstate with include guard
+#ifndef PROCSTATE_DEFINED
+#define PROCSTATE_DEFINED
+enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+#endif
 
 //PAGEBREAK: 17
 // Saved registers for kernel context switches.
@@ -32,8 +41,6 @@ struct context {
   uint eip;
 };
 
-enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
-
 // Per-process state
 struct proc {
   uint sz;                     // Size of process memory (bytes)
@@ -49,11 +56,24 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-          // MLFQ fields
-          int queue_level;             // Current priority queue (0 = highest)
-          int time_slice;              // Remaining time slice
-          int total_runtime;           // Total ticks consumed
-          int priority;                // Process priority (1=highest, 2=medium, 3=lowest)
+  
+  // -- FIELDS FOR PRIORITY-BASED SCHEDULER (PBS) --
+  int priority;                // Static priority, set by set_priority()
+  int wait_time;               // Ticks spent in RUNNABLE, used for PBS aging
+  
+  // -- FIELDS FOR MULTI-LEVEL FEEDBACK QUEUE (MLFQ) --
+  int mlfq_level;              // Current queue level (e.g., 0-4)
+  int mlfq_ticks;              // Ticks executed at current level
+  int queue_level;             // Legacy: Current priority queue (0 = highest)
+  int time_slice;              // Legacy: Remaining time slice
+  int total_runtime;           // Legacy: Total ticks consumed
+  
+  // -- FIELDS FOR PERFORMANCE MONITORING (top) --
+  uint start_time;             // Kernel ticks at process creation (allocproc)
+  uint cpu_ticks;              // Total ticks this process has been RUNNING
+  
+  // -- FIELD FOR DEADLOCK DETECTION --
+  void *waiting_on_chan;       // The 'chan' this process is sleeping on
 };
 
 // Process memory is laid out contiguously, low addresses first:
@@ -79,6 +99,14 @@ struct mlfq_recorder_t {
 
 // External declaration (defined in proc.c)
 extern struct mlfq_recorder_t mlfq_recorder;
+
+// Global CPU stats structure (defined in proc.c)
+// We declare it as an incomplete type here to avoid circular dependencies
+struct cpustats_kernel;
+
+extern struct cpustats_kernel cpu_stats;
+extern struct spinlock policy_lock;
+extern int current_scheduler_policy;
 
 // Function declarations
 void print_queues(void);

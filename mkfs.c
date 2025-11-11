@@ -214,9 +214,19 @@ rsect(uint sec, void *buf)
     perror("lseek");
     exit(1);
   }
-  if(read(fsfd, buf, BSIZE) != BSIZE){
-    perror("read");
-    exit(1);
+  int n = read(fsfd, buf, BSIZE);
+  if(n != BSIZE){
+    // WSL workaround: retry once on read failure
+    if(lseek(fsfd, sec * BSIZE, 0) != sec * BSIZE){
+      perror("lseek retry");
+      exit(1);
+    }
+    n = read(fsfd, buf, BSIZE);
+    if(n != BSIZE){
+      fprintf(stderr, "read sector %d: expected %d bytes, got %d\n", sec, BSIZE, n);
+      perror("read");
+      exit(1);
+    }
   }
 }
 

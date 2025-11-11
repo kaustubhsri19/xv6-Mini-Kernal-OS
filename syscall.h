@@ -28,3 +28,8 @@
 #define SYS_mlfqvisual 27
 #define SYS_mlfqrealtime 28
 #define SYS_setpriority 29
+#define SYS_getallprocinfo 30
+#define SYS_getcpustats 31
+#define SYS_setscheduler 32
+#define SYS_getdeadlockinfo 33
+#define SYS_getscheduler 34

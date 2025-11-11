@@ -24,10 +24,19 @@ acquiresleep(struct sleeplock *lk)
 {
   acquire(&lk->lk);
   while (lk->locked) {
+    // --- DEADLOCK INSTRUMENTATION (WAIT) ---
+    myproc()->waiting_on_chan = (void*)lk;
+    // --- END INSTRUMENTATION ---
+    
     sleep(lk, &lk->lk);
   }
   lk->locked = 1;
+
+  // --- DEADLOCK INSTRUMENTATION (HOLD) ---
   lk->pid = myproc()->pid;
+  myproc()->waiting_on_chan = 0; // No longer waiting
+  // --- END INSTRUMENTATION ---
+  
   release(&lk->lk);
 }
 
@@ -35,8 +44,12 @@ void
 releasesleep(struct sleeplock *lk)
 {
   acquire(&lk->lk);
+  
+  // --- DEADLOCK INSTRUMENTATION (RELEASE) ---
+  lk->pid = 0; // No process holds it now
+  // --- END INSTRUMENTATION ---
+
   lk->locked = 0;
-  lk->pid = 0;
   wakeup(lk);
   release(&lk->lk);
 }
